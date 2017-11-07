@@ -36,6 +36,7 @@
 #include "osi/include/allocator.h"
 #include "osi/include/list.h"
 #include "stack_manager.h"
+#include "osi/include/thread.h"
 
 /*******************************************************************************
 **  Local type definitions
@@ -53,6 +54,9 @@ typedef struct {
     btif_connect_cb_t connect_cb;
 } connect_node_t;
 
+extern int btif_max_av_clients;
+extern int btif_max_hf_clients;
+
 /*******************************************************************************
 **  Static variables
 *******************************************************************************/
@@ -61,11 +65,14 @@ static list_t *connect_queue;
 
 static const size_t MAX_REASONABLE_REQUESTS = 10;
 
+extern thread_t *bt_jni_workqueue_thread;
+
 /*******************************************************************************
 **  Queue helper functions
 *******************************************************************************/
 
 static void queue_int_add(connect_node_t *p_param) {
+    uint16_t counter = 0;
     if (!connect_queue) {
         connect_queue = list_new(osi_free);
         assert(connect_queue != NULL);
@@ -76,11 +83,24 @@ static void queue_int_add(connect_node_t *p_param) {
 
     for (const list_node_t *node = list_begin(connect_queue); node != list_end(connect_queue); node = list_next(node)) {
         if (((connect_node_t *)list_node(node))->uuid == p_param->uuid) {
+            if (p_param->uuid == UUID_SERVCLASS_AUDIO_SOURCE ||
+                p_param->uuid == UUID_SERVCLASS_AG_HANDSFREE) {
+                counter++;
+                LOG_INFO(LOG_TAG, "%s add  connect request for uuid: %04x",
+                                 __func__, counter);
+                continue;
+            }
             LOG_INFO(LOG_TAG, "%s dropping duplicate connect request for uuid: %04x", __func__, p_param->uuid);
             return;
         }
     }
 
+    if ((counter >= btif_max_av_clients && p_param->uuid == UUID_SERVCLASS_AUDIO_SOURCE) ||
+        (counter >= btif_max_hf_clients && p_param->uuid == UUID_SERVCLASS_AG_HANDSFREE)) {
+          LOG_INFO(LOG_TAG, "%s connect request exceeded max supported connection: %04x",
+                              __func__, p_param->uuid);
+          return;
+    }
     connect_node_t *p_node = osi_malloc(sizeof(connect_node_t));
     memcpy(p_node, p_param, sizeof(connect_node_t));
     list_append(connect_queue, p_node);
@@ -138,8 +158,15 @@ bt_status_t btif_queue_connect(uint16_t uuid, const bt_bdaddr_t *bda, btif_conne
 **
 *******************************************************************************/
 void btif_queue_advance() {
-    btif_transfer_context(queue_int_handle_evt, BTIF_QUEUE_ADVANCE_EVT,
+    if (thread_is_self(bt_jni_workqueue_thread))
+    {
+        queue_int_handle_evt(BTIF_QUEUE_ADVANCE_EVT, NULL);
+    }
+    else
+    {
+        btif_transfer_context(queue_int_handle_evt, BTIF_QUEUE_ADVANCE_EVT,
                           NULL, 0, NULL);
+    }
 }
 
 // This function dispatches the next pending connect request. It is called from
