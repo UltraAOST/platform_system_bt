@@ -171,6 +171,13 @@ typedef enum {
   // connecting and enable it after SCO disconnection.
   INTEROP_DISABLE_SNIFF_POLICY_DURING_SCO,
 
+  // Some LE devices have proven problematic behaviour if LE connection update is initiated with
+  // them, resulting in no response after initiating LE connection update and ultimately resulting
+  // in connection timeout.
+  // To avoid degrading the user experience with those devices, LE connection update
+  // is not requested explictly for those devices.
+  INTEROP_DISABLE_LE_CONN_UPDATES,
+
   END_OF_INTEROP_LIST
 
 } interop_feature_t;
